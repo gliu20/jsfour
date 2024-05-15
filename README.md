@@ -1,8 +1,9 @@
-# JSFour
+# JSFour (wip)
 This is an attempt to write a compiler to rewrite JS into these four characters: `[+=]`
 
+## What am I looking at?
+This is a variant of [JSFuck](https://en.wikipedia.org/wiki/JSFuck) which is a way to use JavaScript type coercions to create arbitrary strings. Once you have that you can do `Function["constructor"]('/* string representation of arbitrary code here */')()` to run any code you would normally.
 
-The project is currently a work in progress.
 
 # [demo] [compiler-simple.html](https://gliu20.github.io/jsfour/compiler-simple.html)
 # [demo] [compiler-v2.html](https://gliu20.github.io/jsfour/compiler-v2.html)
