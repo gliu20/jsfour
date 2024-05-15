@@ -1,0 +1,459 @@
+<style>
+  * {
+    font-family: 'Courier New', Courier, monospace;
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  #internals {
+    height: 100%;
+    border: 3px solid black;
+    overflow-y: auto;
+  }
+
+  #internals>table {
+    table-layout: fixed;
+    width: 100%;
+    height: 100%;
+    border-collapse: collapse;
+  }
+
+  #internals>table tr {
+    display: flex;
+  }
+
+  #internals>table td {
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    display: inline-block;
+  }
+
+  #internals>table input {
+    width: 100%;
+  }
+
+  #internals>table td:nth-child(1) {
+    width: 30%;
+  }
+
+  #internals>table td:nth-child(2) {
+    width: 50%;
+  }
+
+  #internals>table td:nth-child(3) {
+    flex: 1;
+  }
+
+  @media (min-width:600px) {
+    #internals>table td:nth-child(1) {
+      width: 20%;
+    }
+
+    #internals>table td:nth-child(2) {
+      width: 40%;
+    }
+  }
+
+  @media (min-width:1100px) {
+    #internals>table td:nth-child(1) {
+      width: 10%;
+    }
+
+    #internals>table td:nth-child(2) {
+      width: 20%;
+    }
+  }
+</style>
+
+
+<section id="internals"></section>
+<!--
+<script src="https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.js"></script>-->
+<script src="lodash.js"></script>
+<script>
+  const type = (a) => ({}).toString.bind(a)()
+    .replace(/^\[object /, "[");
+  const key = (key) => `${type(key)}<${typeof key === "string" ? `'${key}'` : key}>`;
+  const tryEval = (str) => {
+    let result;
+    try {
+      result = eval(str);
+    }
+    catch (err) { result = err; }
+    return result;
+  }
+
+  const argDoubler = function () {
+    //a = ["return self"];
+    //b = Function.call(a, a);
+    //b();
+
+    return;
+  }
+
+  const compile = (program) => {
+    const _ = window._symbols = {};
+    const _dependencies = window._dependencies = [];
+
+    /**
+     * Define how compiler should save and get compiler
+     * intrinsics
+     */
+    const ref = (value) => {
+      value = key(value);
+
+      if (!_.hasOwnProperty(value))
+        throw new Error(`'${value}' not defined.`);
+      return _[value];
+    }
+    const def = (value, ...definitions) => {
+      value = key(value);
+
+      const defHelper = (value, definition) => {
+        if (!_.hasOwnProperty(value))
+          return _[value] = definition;
+        if (_[value].length > definition.length)
+          return _[value] = definition;
+      }
+
+      for (let definition of definitions)
+        defHelper(value, definition);
+    }
+
+    /** 
+     * Level 0: very basic values
+     */
+    def(0, `+[]`);
+    def("", `[]+[]`);
+
+    // needs to be defined since numbers may depend on this
+    def(false, `[]==[]`);
+    def(true, `+${ref(false)}`);
+
+    /**
+     * Level 1: getting numbers
+     */
+
+    // TODO make these functions smarter
+    const inc = (s) => `++[${s}][${ref(0)}]`;
+    const castToNum = (s) => `+[${s}]`;
+    const arr = (s) => `[${s}]`;
+    const grp = (s) => `[${s}][${ref(0)}]`;
+    const idx = (s, i) => `${s}[${i}]`;
+    const castToStr = (s) => `${grp(s)}+[]`;
+    const num = (n) => n <= 9 ? ref(n) :
+      n.toString().split("").map(Number).map(ref).map(arr).join("+");
+   
+   /*
+ 
+[].entries``.constructor.call``+""   
+   */
+   self.num=num;
+   self.inc=inc;
+      
+    const word = (s) => def(
+      s,
+      s.toString().split("")
+        .map(s => /^\d+$/.test(s) ? Number(s) : s)
+        .map(ref).map(arr).join("+")
+    );
+
+
+    def(1, `${castToNum(ref(true))}[${ref(0)}]`, inc(`[]`));
+    def(2, inc(ref(1)), inc(ref(true)));
+    def(3, inc(ref(2)));
+    def(4, inc(ref(3)));
+    def(5, inc(ref(4)));
+    def(6, inc(ref(5)));
+    def(7, inc(ref(6)));
+    def(8, inc(ref(7)));
+    def(9, inc(ref(8)));
+
+    /**
+     * Level 2: basic values pt.2
+     */
+    const prim = (value, definition, until) => {
+      def(value, definition);
+
+      value = value + "";
+
+      if (until)
+        value = value.substr(0, value.indexOf(until) + 1);
+
+      value
+        .split("")
+        .forEach((l, i) =>
+          def(l, idx(grp(castToStr(definition)), num(i)))
+        );
+    };
+
+    prim(false, `[]==[]`);
+    prim(true, `+[]==[]`);
+    prim(undefined, `[][[]]`);
+    prim(NaN, `+${ref(undefined)}`);
+
+    /**
+     * Level 3: Number adjacent
+     */
+    word("1e1000");
+    word("11e100");
+
+    prim(Infinity, castToNum(ref("1e1000")));
+    prim(1.1e+101, castToNum(ref("11e100")));
+
+
+    word(".0000001");
+    prim(1e-7, castToNum(ref(".0000001")));
+
+
+    /**
+     * Level 4: Functions
+     */
+    word("at");
+    word("flat");
+
+    prim([].at, `[][${ref("at")}]`, '{');
+    prim([].flat, `[][${ref("flat")}]`, '{');
+
+    word("constructor");
+
+
+    /**
+     * Level 5: Constructors
+     */
+    prim(Array, `[][${ref("constructor")}]`, '{');
+    prim(Number, `${grp(ref(0))}[${ref("constructor")}]`, '{');
+    prim(Boolean, `${grp(ref(false))}[${ref("constructor")}]`, '{');
+    prim(Boolean, `${grp(ref(true))}[${ref("constructor")}]`, '{');
+    prim(Function, `${ref([].at)}[${ref("constructor")}]`, '{');
+    prim(String, `${grp(ref(""))}[${ref("constructor")}]`, '{');
+
+
+    /**
+     * Level 6: Programming constructs
+     */
+
+    // voids output of toVoid and masks it with the return value of
+    // toReturn
+    const voidRet = (toVoid, toReturn) => `[][${toVoid}]=${toReturn}`;
+
+    // represents a block of code with the last statement expression
+    // as the return value
+    const block = (...statements) => statements
+      .reverse()
+      .reduce((output, curr) =>
+        voidRet(curr, output));
+
+    // gets address of store
+    const store = (key) => idx(ref([].at), key);
+
+    // returns key for store
+    const [malloc, peekMalloc] = (() => {
+      let ptr = 0;
+      return [
+        () => ref(ptr++),
+        () => ref(ptr + 1)
+      ];
+    })();
+
+    const eagerTernary = (condition, truthy, falsy, refOverride) => {
+      const mem = malloc();
+      return block(
+        // eager because all values (truthy, falsy, and condition)
+        // are evaluated regardless of condition
+        `${store(mem)}=${arr(falsy)}`,
+        `${store(mem)}[${refOverride ?? ref(1)}]=${truthy}`,
+        `${store(mem)}[+${grp(condition)}]`
+      )
+    };
+
+    /**
+     * Level 7: [object Function]
+     */
+    word("name");
+    word("to");
+    word("toString");
+
+    // alternative path toString that is overall shorter
+    prim("String", idx(ref(String), ref("name")));
+    prim("toString", `${ref("to")}+${ref("String")}`);
+
+    (() => {
+      const mem0 = malloc();
+      const mem1 = malloc();
+
+      prim("[object Function]", block(
+        // store[0] = "toString";
+        `${store(mem0)}=${ref("toString")}`,
+        // [].flat.toString = [].toString;
+        `${ref([].flat)}[${store(mem0)}]=[][${store(mem0)}]`,
+        // store[1]=[].flat+""; 
+        `${store(mem1)}=${ref([].flat)}+[]`,
+        // [].flat.toString = [].at.toString;
+        `${ref([].flat)}[${store(mem0)}]=${ref([].at)}[${store(mem0)}]`,
+        // return store[1];
+        store(mem1)
+      ));
+    })();
+
+    /**
+     * Level 8: Difficult letters in "function at() { [native code] }"
+     */
+    def("v", idx(
+      grp(castToStr(ref([].at))),
+      eagerTernary(
+        `+${grp(castToStr(ref([].at)))}[${num(16)}]`,
+        num(21), // index of v on chrome
+        num(25), // index of v on firefox
+        ref(NaN)
+      )
+    ));
+
+    def("[", idx(
+      grp(castToStr(ref([].at))),
+      eagerTernary(
+        `+${grp(castToStr(ref([].at)))}[${num(16)}]`,
+        num(16), // index of [ on chrome
+        num(20), // index of [ on firefox
+        ref(NaN)
+      )
+    ));
+
+    def("]", idx(
+      grp(castToStr(ref([].at))),
+      eagerTernary(
+        `+${grp(castToStr(ref([].at)))}[${num(16)}]`,
+        num(28), // index of ] on chrome
+        num(32), // index of ] on firefox
+        ref(NaN)
+      )
+    ));
+
+    def("}", idx(
+      grp(castToStr(ref([].at))),
+      eagerTernary(
+        `+${grp(castToStr(ref([].at)))}[${num(16)}]`,
+        num(30), // index of } on chrome
+        num(34), // index of } on firefox
+        ref(NaN)
+      )
+    ));
+
+    //({}).toString.bind()()
+
+    /**
+     * Level 9: Comma
+     */
+    word("join");
+
+    (() => {
+      const mem = malloc();
+
+      def(",", block(
+        // store[0] = [""];
+        `${store(mem)}=[${ref("")}]`,
+        // store[0][1] = "";
+        `${store(mem)}[${ref(1)}]=${ref("")}`,
+        // store[0].toString = [].join;
+        `${store(mem)}[${ref("toString")}]=[][${ref("join")}]`,
+        // return store[0]+"";
+        `${store(mem)}+[]`,
+      ));
+    })();
+
+    //
+    //Number.u = [];
+    //Number.u.valueOf = "a".link;
+    //Number.u + "";
+
+    // k --> Object.keys
+    // P, p, w --> Object.getOwnPropertyNames
+    //h,k,p,q,w,x,z
+    
+    //arguments this typeof throw new apply
+
+    // way to more reliably control thiis
+    //a = "".link;
+    //a.toString = [].at.apply;
+    //a + "";
+
+
+    word(program);
+
+    displayInternals(_);
+    console.log(peekMalloc().length);
+
+    return block(ref(program));
+
+  }
+
+  const displayInternals = (_) => {
+    const appendNodeToRoot = (rootNode, ele) =>
+      (rootNode.appendChild(ele), rootNode);
+    const wrapContentInTd = content => {
+      const ele = document.createElement("td");
+      ele.textContent = content;
+      return ele;
+    };
+    const wrapContentInInput = content => {
+      const ele = document.createElement("input");
+      ele.value = content;
+      ele.onclick = () => ele.select();
+      return ele;
+    };
+
+    internals.appendChild(Object.entries(_)
+      .map(([k, d]) => {
+        if (k !== key(tryEval(d)))
+          return [`${k} expected matching key but got '${key(tryEval(d))}'`];
+        return [
+          `(${d.length} chars)`,
+          `${k.replace(/\n/g, "")}`,
+          `${d}`
+        ];
+      })
+      .map(arr =>
+        arr
+          .map((content, i) => {
+            if (i === 2)
+              return appendNodeToRoot(
+                document.createElement("td"),
+                wrapContentInInput(content)
+              );
+            return wrapContentInTd(content);
+          })
+          .reduce(appendNodeToRoot, document.createElement("tr"))
+      )
+      .reduce(appendNodeToRoot, document.createElement("table"))
+    );
+  }
+
+  compile("return self");
+  
+  
+  /*
+  console.table(_.keys(_).filter(s => /^[0-9falsetrundiNIycoAmbBFSgj]+$/.test(s)).map(s => ({
+	key: s, 
+	cost: compile(s).length,
+	chars: (_[s]+"")
+		.replace(/[() {}\-\.\,0-9falsetrundiNIycoAmbBFSgj]/g,"")
+		.split("")
+		.filter((s,i,arr) => arr.indexOf(s) === i)
+		.join("")
+})))
+  
+  */
+  
+  
+  // lodash info
+  // coreJsData --> why necessary check shims
+  // funcToString --> why look at decompiled code huh?
+  // maskSrcKey
+</script>

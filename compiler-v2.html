@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>JS Fudge Compiler</title>
+<style>
+html, body { height: 100%; margin: 0; }
+.wrapper {
+  display: flex;
+  height: 100%;
+}
+
+.wrapper > * {
+  overflow:auto;
+  margin-right:10px;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.content > * {
+  overflow: auto;
+}
+
+.content input {
+  font: inherit;
+  width: 
+}
+
+#charPrimitives {
+  flex: 1;
+}
+#messages {
+  height: 200px;
+}
+
+</style>
+</head>
+<body>
+
+<div class="wrapper">
+  <div class="sidebar">
+    <pre id="compilableChars"></pre>
+    <pre id="accesibleProps"></pre>
+  </div>
+  <div class="content">
+    <pre id="representationStats"></pre>
+    <pre id="charPrimitives"></pre>
+    <pre id="messages"></pre>
+  </div>
+</div>
+
+<script>
+const tryEval = (str) => {
+  let result;
+  try {
+    result = eval(str);
+  }
+  catch (err) { result = err; }
+  return result;
+}
+
+const isWordSelfContained = (word) => {
+  const _debug = [];
+  if (word === null) return false;
+  
+  let nestingLevel = 0;
+  for (let i = 0; i < word.length; i++) {
+    const currChar = word[i];
+    
+    if (currChar === "[") nestingLevel++;
+    if (currChar === "]") nestingLevel--;
+    
+    _debug.push({ nestingLevel, currChar, i })
+    
+    const atEndOfWord = (word.length - i) === 1;
+    const willIndex = word[i+1] === "[";
+    const hadIndexed = word[i] === "]";
+    
+    if (nestingLevel === 0 && !atEndOfWord && (!willIndex || !hadIndexed)) {
+      console.log(_debug);
+      return false;
+    }
+  }
+  
+  console.log(_debug);
+  return true;
+}
+
+const smartInjectLetterDef = (letter, letterDef) => {
+  const letterDefExists = () => !!_[letter];
+  const hasSmallerExistingDef = () => _[letter]().length < letterDef.length;
+  
+  if (letterDefExists() && hasSmallerExistingDef()) {
+    return;
+  }
+  
+  //_[letter] = () => letterDef;
+  _[letter] = __["memoize"](() => letterDef);
+}
+
+const addMessage = (str) => (messages.textContent += str + "\n", str);
+
+const cacheStats = { hits: 0, misses: 0 };
+
+// helpers
+const __ = {
+  "memoize": builder => {
+    let firstRun = true;
+    let cache;
+    return (...args) => {
+      if (firstRun) {
+        firstRun = false;
+        cacheStats.misses++;
+        return cache = builder(...args);
+      }
+      cacheStats.hits++;
+      return cache;
+    }
+  },
+  "arr": str => `[${str}]`,
+  "++": str => `++[${str}][${_[0]()}]`,
+  "num": num => num > 9 ? 
+    num
+      .toString()
+      .split("")
+      .map(d => _[d]())
+      // smartly avoid grouping first digit unnecessarily
+      .map((d,i) => i === 0 ? d : __["arr"](d))
+      .join("+") : _[num](),
+  "word": str => {
+    const word = str.toString();
+    str = word
+      .split("")
+      .map(letter => (
+        _[letter] || 
+        (() => 
+          addMessage(`err: __.word failed to build '${letter}' in '${word}'`))
+      )());
+    
+    const wordBuilders = [
+      () => str // naively assume every letter combines nicely
+        .join("+"),
+      () => {
+        addMessage(`perf: __.word: smartly isolating select chars except first in '${word}'`);
+        const result = str
+          // smartly isolate letters except for first letter
+          .map((letter, i) => isWordSelfContained(letter) || i === 0 ? letter : __["arr"](letter))
+          .join("+");
+        
+        return result;
+      },
+      () => {
+        addMessage(`perf: __.word: naively isolating every char except first in '${word}'`);
+        const result = str // naively isolate every letter except for first letter
+          .map((letter, i) => i === 0 ? letter : __["arr"](letter))
+          .join("+");
+        
+        return result;
+      },
+      () => {
+        addMessage(`perf: __.word: smartly isolating select chars in '${word}'`);
+        const result = str
+          // smartly isolate letters
+          .map(letter => isWordSelfContained(letter) ? letter : __["arr"](letter))
+          .join("+");
+        
+        return result;
+      },
+      () => {
+        addMessage(`perf: __.word: naively isolating every char in '${word}'`);
+        const result = str // naively isolate every letter
+          .map(letter => __["arr"](letter))
+          .join("+");
+        
+        return result;
+      },
+    ]
+    for (let wordBuilder of wordBuilders) {
+      const wordDef = wordBuilder();
+      const wordResult = tryEval(wordDef);
+      if (wordResult.toString() === word.toString()) {
+        return wordDef;
+      }
+    }
+    
+    addMessage(`warn: __.word: failed to find optimal builder for '${
+      word
+    }'. resorting to fallback`)
+    return wordBuilders[0]();
+  },
+  "group": str => `[${str}][${_[0]()}]`,
+  "tryGroup": str => isWordSelfContained(str) ? str : __["group"](str),
+  "tryArr": str => isWordSelfContained(str) ? str : __["arr"](str),
+  "index": (str, index) => {
+    str = __["tryGroup"](str);
+    return `${str}[${__["num"](index)}]`;
+  },
+  "str": str => {  
+    const stringifiers = [
+      () => str,
+      () => `${str}+[]`,
+      () => `${__["arr"](str)}+[]`,
+    ];
+    
+    for (let wordBuilder of stringifiers) {
+      const wordDef = wordBuilder();
+      const wordResult = tryEval(wordDef);
+      const word = (tryEval(str) === undefined ? 
+        "undefined" : tryEval(str)).toString();
+
+      if (wordResult === word) {
+        return wordDef;
+      }
+    }
+    
+    addMessage(`warn: __.str: failed to find optimal stringifier for '${
+      str
+    }'. resorting to fallback`)
+    return stringifiers[0]();
+  },
+  "smallerOf": (...options) => options.reduce((a, b) =>
+    a.length > b.length ? b : a),
+  "void": (toVoid, toReturn) => `[][${toVoid}]=${toReturn}`,
+  "statements": (...statements) => statements
+    .reverse()
+    .reduce((output, curr) => 
+      __["void"](curr, output)),
+  "substr": (str, startIndex, endIndex) => {
+    addMessage(`perf: __.substr: substr bloats char representation. avoid for word '${tryEval(str)}'`);
+    // terrible hack to emulate behaviour of substr
+    let compiledStr = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      compiledStr.push(__["index"](str, i))
+    }
+    return compiledStr.join("+");
+  },
+  /*" [": () => __["substr"](
+    __["str"](_["function at() { [native code] }"]()),
+    16, 20
+  ),
+  " [nativ": () => __["substr"](
+    __["str"](_["function at() { [native code] }"]()),
+    16, 25
+  ),
+  " [native code]": () => __["substr"](
+    __["str"](_["function at() { [native code] }"]()),
+    16, 32
+  ),
+  " [native code] }": () => __["substr"](
+    __["str"](_["function at() { [native code] }"]()),
+    16, 34
+  ),*/
+  "store": (key) => `${
+    _["function at() { [native code] }"]()
+  }${
+    __["arr"](
+      Object.values(_)
+        .map(builder => builder())
+        .sort((a,b) => a.length - b.length)[key]
+    )
+  }`,
+  /*"trim": (str) => __["void"](
+    `${__["store"]()}=${__["arr"](str)}`,
+    __["void"](
+      `${__["store"]()}${__["arr"](_["valueOf"]())}=${
+        __["group"](_[""]())
+      }${
+        __["arr"](_["trim"]())
+      }`,
+      `[]+${__["store"]()}`
+    )
+  ),*/
+};
+
+// chars and primitives
+const _ = {
+  // level 1 primitive values
+  "": () => `[]+[]`,
+  "0": () => `+[]`,
+  "false": () => `[]==[]`,
+  "true": () => `+[]==[]`,
+  "undefined": () => `[][[]]`,
+  "NaN": () => `+${_["undefined"]()}`,
+  
+  
+  
+  // digits
+  "1": () => __["++"](`[]`),
+  "2": () => __["++"](__["smallerOf"](_[true](), _[1]())),
+  "3": () => __["++"](_[2]()),
+  "4": () => __["++"](_[3]()),
+  "5": () => __["++"](_[4]()),
+  "6": () => __["++"](_[5]()),
+  "7": () => __["++"](_[6]()),
+  "8": () => __["++"](_[7]()),
+  "9": () => __["++"](_[8]()),
+  
+  // level 2
+  "1e1000": () => [
+    _[1](),
+    _["e"](),
+    __["tryArr"](__["num"]("1000"))
+  ].join("+"),
+  "Infinity": () => `+[${_["1e1000"]()}]`,
+  "11e100": () => [
+    __["num"](11),
+    _["e"](),
+    __["tryArr"](__["num"]("100"))
+  ].join("+"),
+  "1.1e+101": () => `+[${_["11e100"]()}]`,
+  ".0000001": () => [
+    _["."](),
+    __["tryArr"](__["word"]("0000001"))
+  ].join("+"),
+  "1e-7": () => `+[${_[".0000001"]()}]`,
+  
+  // level 3
+  "at": () => __["word"]("at"),
+  "flat": () => __["word"]("flat"),
+  "function at() { [native code] }": () => `[][${_["at"]()}]`,
+  "function flat() { [native code] }": () => `[][${_["flat"]()}]`,
+  "constructor": () => __["word"]("constructor"),
+  
+  // level 4
+  "function Array() { [native code] }": () => `[][${_["constructor"]()}]`,
+  "function Number() { [native code] }": () => `${__["group"](_[0]())}[${_["constructor"]()}]`,
+  "function Boolean() { [native code] }": () => `${__["group"](
+    __["smallerOf"](_[true](), _[false]())
+  )}[${_["constructor"]()}]`,
+  "function String() { [native code] }": () => `${__["group"](_[""]())}[${_["constructor"]()}]`,
+  "function Function() { [native code] }": () => `[][${_["at"]()}][${_["constructor"]()}]`,
+  
+  // level 5
+  "name":  () => __["word"]("name"),
+  //"call": () => __["word"]("call"),
+  "String": () => __["smallerOf"](
+    __["word"]("String"), 
+    `${_["function String() { [native code] }"]()}[${_["name"]()}]`
+  ),
+  "toString": () => [
+    __["word"]("to"),
+    __["tryArr"](_["String"]())
+  ].join("+"),
+  
+  
+  "[object Function]": () => __["statements"](
+    // store[0] = "toString";
+    `${__["store"](0)}=${_["toString"]()}`,
+  
+    // [].flat.toString = [].toString;
+    `${_["function flat() { [native code] }"]()}${__["arr"](__["store"](0))}=[]${
+      __["arr"](__["store"](0))
+    }`,
+    
+    // store[1]=[].flat+""; 
+    `${__["store"](1)}=[]+${_["function flat() { [native code] }"]()}`,
+    
+    // cleanup 
+    // [].flat.toString = [].at.toString;
+    `${_["function flat() { [native code] }"]()}${__["arr"](__["store"](0))}=${
+      _["function at() { [native code] }"]()
+    }${ __["arr"](__["store"](0)) }`,
+    
+    // return value
+    __["store"](1),
+  ),
+
+  
+  
+  /*
+  
+  
+[].at;
+[].at.toString = [].toString;
+[].at+""
+
+
+ */
+  // level 6
+  
+  
+  
+  
+  // get v
+  // get {
+  //"trim":  () => __["word"]("trim"),
+  //"v": () => __["group"](__[" [nativ"]())+`[${__["num"](9)}]`,
+  
+  /*({}).toString.call()*/
+  /*
+  
+method 1:
+a = prompt;
+a.toString = [].at.call;
+a+""; 
+
+method 2:
+a = [ "   trim me   " ];
+a.toString = a.entries;
+a+"" 
+
+
+attempt: 
+Number.a = Function`
+  console.log(Number.a+'');
+`;
+Number.a.valueOf=[].at.call;
+Number.a+"";
+
+[object Function]
+a = [].at;
+a.toString = [].toString;
+a+""; 
+
+
+  */
+  
+};
+
+
+
+Object.entries(_)
+  .forEach(([word, wordDef]) => _[word] = __["memoize"](wordDef));
+
+console.time("build letter mappping");
+Object.entries(_)
+  .filter(([word, wordDef]) => word.length > 1)
+  .map(([word]) => word)
+  .forEach(w => {
+    if (w.startsWith("function ") && w.endsWith("}")) {
+      return w.split("").forEach((l, i) => {
+        if (i > w.indexOf("{")) return;
+        smartInjectLetterDef(l, __["index"](__["str"](_[w]()),i))
+      })
+    }
+    return w.split("").forEach((l, i) =>
+      smartInjectLetterDef(l, __["index"](__["str"](_[w]()),i))
+    )
+  });
+console.timeEnd("build letter mappping");
+
+
+const emitValueValidation = (value, expected) => {
+  if (typeof value === "function") {
+    // convert to Chrome style function string
+    const functionString = value.toString()
+      .replace(/\s+(\[native code\])\s+/," $1 ");
+      
+    value = { 
+      toString: () => functionString,
+      constructor: { name: "Function" }
+    }
+  }
+  if (value?.toString() === expected?.toString()) {
+    const type = value.constructor.name;
+    return { 
+      passed: true, 
+      message:`[${type} ${typeof value === 'string' ? `'${value}'` : value}]` 
+    };
+  }
+  
+  if (value + "" == "undefined" && 
+    expected + "" == "undefined") {
+    return { passed: true, message: `[undefined]`};
+  }
+  
+  return {
+    passed: false,
+    message: `[Error expected '${
+      expected
+    }' but got '${value ?? 'invalid jsFudge'}']`
+  };
+}
+
+const debugWordDef = (word, wordDefBuilder) => {
+  const wordDef = wordDefBuilder();
+  const wordDefLength = wordDef.length;
+  const wordDefResult = tryEval(wordDef) ?? null;
+  
+  // workaround with null and undefined to avoid
+  // wordDefResult is undefined errors
+  const valueValidation = emitValueValidation(
+    wordDefResult === null ? undefined : wordDefResult, 
+    word
+  );
+  
+  const isValidChars = /^[\[\]=\+]+$/.test(wordDef);
+  
+  const wordDefAutoSelect = `<input onclick="this.select()" 
+    value="${wordDef}" 
+    style="width: ${wordDefLength}ch;"readonly>`;
+  
+  return `<tr><td>${valueValidation.message + (isValidChars ? "" : "[INVALID]") }</td>
+    <td>(${wordDefLength})</td>
+    <td>${wordDefAutoSelect}</td></tr>`
+}
+const debugCharPrimitives = () => {
+  let debugStr = "";
+  for (let [word, wordDefBuilder] of Object.entries(_)) {
+    debugStr += debugWordDef(word, wordDefBuilder) + "\n";
+  }
+  return debugStr;
+}
+
+const debugRepresentationStats = () => {
+  const numOfWords = Object.values(_).length;
+  const totalChars = Object.values(_)
+    .map(wordDefBuilder => wordDefBuilder())
+    .map(word => word.length)
+    .reduce((sum, val) => sum + val);
+    
+  return `Representing ${numOfWords} words in ${totalChars} chars (${
+    (totalChars / numOfWords).toFixed(3)
+  } chars per word)`
+}
+
+representationStats.textContent = debugRepresentationStats();
+charPrimitives.innerHTML = `<table>${debugCharPrimitives()}</table>`;
+
+</script>
+</body>
+</html>
