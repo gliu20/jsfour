@@ -361,8 +361,6 @@
         `${store(mem)}=[${ref("")}]`,
         // store[0][1] = "";
         `${store(mem)}[${ref(1)}]=${ref("")}`,
-        // store[0].toString = [].join;
-        `${store(mem)}[${ref("toString")}]=[][${ref("join")}]`,
         // return store[0]+"";
         `${store(mem)}+[]`,
       ));
